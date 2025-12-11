@@ -64,6 +64,11 @@ quantlab dashboard
 | Phi-2 | 2.7B | INT4+offload | CPU offload needed |
 | Gemma 2B | 2B | INT4+offload | CPU offload needed |
 
+The platform also includes:
+- low_vram.yaml config for memory-constrained GPUs
+- low_vram_example.py demonstrating optimal settings
+- Automatic CPU offloading support
+
 ## Project Structure
 
 ```
