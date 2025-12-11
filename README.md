@@ -39,17 +39,32 @@ lab.compare(result.id, baseline="fp16")
 ## CLI Usage
 
 ```bash
-# Run an experiment
-quantlab run --model facebook/opt-125m --quant int8
+# Install the package first
+pip install -e .
 
-# List experiments
-quantlab list
-
-# Compare experiments
+# Then use CLI commands
+quantlab run facebook/opt-125m --quant int8
+quantlab list-experiments --limit 10
 quantlab compare <exp_id_1> <exp_id_2>
+quantlab sweep gpt2 --methods "fp16,int8,nf4"
 
-# Launch web dashboard
-quantlab dashboard
+# Or run via python module (without pip install)
+python -m quantlab.dashboard.cli run facebook/opt-125m --quant int8
+python -m quantlab.dashboard.cli list-experiments --limit 10
+```
+
+### Example Output
+
+```
+$ quantlab list-experiments --limit 10
+                                        Experiments                                        
+┏━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━┓
+┃ ID       ┃ Model    ┃ Quant ┃ Status    ┃ Memory (MB) ┃ Latency (ms) ┃ Timestamp        ┃
+┡━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━┩
+│ 0d68d2e1 │ opt-125m │ nf4   │ completed │       117.4 │      22150.5 │ 2025-12-11 16:51 │
+│ 77f8ef71 │ opt-125m │ int8  │ completed │       157.9 │      26384.9 │ 2025-12-11 16:22 │
+│ 4ce44066 │ opt-125m │ fp16  │ completed │       238.9 │       5132.4 │ 2025-12-11 16:12 │
+└──────────┴──────────┴───────┴───────────┴─────────────┴──────────────┴──────────────────┘
 ```
 
 ## Supported Models (Tested on 4GB VRAM)
