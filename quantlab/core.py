@@ -215,6 +215,7 @@ class QuantLab:
         model_name: Optional[str] = None,
         quant_method: Optional[str] = None,
         tags: Optional[List[str]] = None,
+        status: Optional[str] = None,
         limit: int = 20,
     ) -> List[Experiment]:
         """List experiments with optional filters."""
@@ -222,6 +223,7 @@ class QuantLab:
             model_name=model_name,
             quant_method=quant_method,
             tags=tags,
+            status=status,
             limit=limit,
         )
     

@@ -219,14 +219,18 @@ def render_new_experiment(lab):
             tags = st.text_input("Tags (comma-separated)")
         
         st.subheader("Benchmark Settings")
+        
         col1, col2, col3 = st.columns(3)
         
         with col1:
             run_benchmark = st.checkbox("Run Benchmarks", value=True)
+            st.caption("📊 **Benchmarks measure:**\n- Memory usage (MB)\n- Latency (ms per token)\n- Throughput (tokens/sec)")
         with col2:
             run_eval = st.checkbox("Run Evaluation", value=False)
+            st.caption("📝 **Evaluations measure:**\n- Perplexity\n- Coherence checks\n- lm-eval harness tasks")
         with col3:
             warmup_runs = st.number_input("Warmup Runs", min_value=1, value=3)
+            st.caption("Number of warmup iterations before timing")
         
         submitted = st.form_submit_button("Run Experiment", type="primary")
     
@@ -257,8 +261,9 @@ def render_chat(lab):
     that raw metrics can't capture.
     """)
     
-    # Model selection
-    experiments = lab.list_experiments(status="completed", limit=20)
+    # Model selection - get all experiments and filter locally for completed
+    all_experiments = lab.list_experiments(limit=50)
+    experiments = [e for e in all_experiments if e.status == "completed"]
     
     if not experiments:
         st.info("No completed experiments available. Run an experiment first!")
@@ -279,7 +284,8 @@ def render_chat(lab):
     
     with col2:
         if selected_exp:
-            st.metric("Memory", f"{selected_exp.metrics.get('memory_mb', 'N/A'):.1f} MB")
+            mem = selected_exp.metrics.get('memory_mb')
+            st.metric("Memory", f"{mem:.1f} MB" if mem else "N/A")
     
     st.divider()
     
@@ -303,15 +309,17 @@ def render_chat(lab):
             if st.button("Load Model for Chat", type="primary"):
                 with st.spinner(f"Loading {selected_exp.model_name}..."):
                     try:
-                        # Get the quantization config
-                        from quantlab.quantization import get_strategy
+                        # Get the quantization config from experiment
+                        quant_config = selected_exp.quant_config or {}
                         
-                        strategy = get_strategy(selected_exp.quant_method)
+                        # Load using the registry with stored config
+                        from quantlab.config import QuantizationConfig
+                        
+                        qc = QuantizationConfig(method=selected_exp.quant_method)
                         
                         model, tokenizer = lab.registry.load_model(
                             model_name=selected_exp.model_name,
-                            quantization_config=strategy.get_load_config() if strategy else None,
-                            torch_dtype=strategy.get_torch_dtype() if strategy else None,
+                            quantization_config=qc,
                         )
                         
                         st.session_state.chat_model = model
@@ -447,7 +455,12 @@ def render_compare(lab):
     # Comparison table
     st.subheader("Comparison Table")
     
-    # Build DataFrame
+    # Metrics to show in comparison (exclude nested objects like eval responses)
+    numeric_metrics = ["memory_mb", "latency_mean_ms", "throughput_tps", "perplexity",
+                       "latency_p50_ms", "latency_p95_ms", "latency_p99_ms",
+                       "gpu_memory_mb", "cpu_memory_mb"]
+    
+    # Build DataFrame with only scalar values
     data = []
     for i, exp_info in enumerate(comparison["experiments"]):
         row = {
@@ -456,12 +469,15 @@ def render_compare(lab):
             "Quantization": exp_info["quant"],
         }
         for metric, values in comparison["metrics"].items():
+            # Only include numeric/scalar metrics, skip lists/dicts
             if i < len(values) and values[i] is not None:
-                row[metric] = values[i]
+                val = values[i]
+                if isinstance(val, (int, float)) and not isinstance(val, bool):
+                    row[metric] = round(val, 2) if isinstance(val, float) else val
         data.append(row)
     
     df = pd.DataFrame(data)
-    st.dataframe(df, width="stretch", hide_index=True)
+    st.dataframe(df, width='stretch', hide_index=True)
     
     # Radar chart comparison
     st.subheader("Metric Comparison")
@@ -529,11 +545,39 @@ def render_settings(lab):
     
     st.divider()
     
-    st.subheader("Danger Zone")
-    if st.button("Clear All Experiments", type="primary"):
-        if st.checkbox("I understand this will delete all experiments"):
-            # Would implement delete all here
-            st.warning("Not implemented for safety. Delete experiments individually.")
+    st.subheader("Manage Experiments")
+    
+    # Delete specific experiments
+    st.write("### Delete Experiments")
+    all_experiments = lab.list_experiments(limit=1000)
+    
+    if all_experiments:
+        exp_options = {
+            f"{e.id} - {e.model_name.split('/')[-1]} ({e.quant_method})": e.id 
+            for e in all_experiments
+        }
+        
+        to_delete = st.multiselect(
+            "Select experiments to delete",
+            options=list(exp_options.keys()),
+        )
+        
+        if to_delete:
+            if st.button(f"Delete {len(to_delete)} Experiments", type="primary"):
+                success_count = 0
+                for selection in to_delete:
+                    exp_id = exp_options[selection]
+                    if lab.delete_experiment(exp_id):
+                        success_count += 1
+                
+                if success_count > 0:
+                    st.success(f"Deleted {success_count} experiments.")
+                    st.rerun()
+                else:
+                    st.error("Failed to delete experiments.")
+    else:
+        st.info("No experiments to delete.")
+
 
 
 def launch_dashboard(port: int = 8501):
