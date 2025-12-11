@@ -56,13 +56,15 @@ def create_app():
     st.sidebar.title("⚡ QuantLab")
     page = st.sidebar.radio(
         "Navigation",
-        ["📊 Dashboard", "🔬 New Experiment", "📈 Compare", "⚙️ Settings"]
+        ["📊 Dashboard", "🔬 New Experiment", "💬 Chat", "📈 Compare", "⚙️ Settings"]
     )
     
     if page == "📊 Dashboard":
         render_dashboard(lab)
     elif page == "🔬 New Experiment":
         render_new_experiment(lab)
+    elif page == "💬 Chat":
+        render_chat(lab)
     elif page == "📈 Compare":
         render_compare(lab)
     elif page == "⚙️ Settings":
@@ -245,6 +247,171 @@ def render_new_experiment(lab):
                 
             except Exception as e:
                 st.error(f"Experiment failed: {e}")
+
+
+def render_chat(lab):
+    """Render the interactive chat interface for model testing."""
+    st.title("💬 Model Chat")
+    st.markdown("""
+    Test your quantized models interactively! This provides qualitative feedback 
+    that raw metrics can't capture.
+    """)
+    
+    # Model selection
+    experiments = lab.list_experiments(status="completed", limit=20)
+    
+    if not experiments:
+        st.info("No completed experiments available. Run an experiment first!")
+        return
+    
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        exp_options = {
+            f"{e.id} - {e.model_name.split('/')[-1]} ({e.quant_method})": e 
+            for e in experiments
+        }
+        selected_key = st.selectbox(
+            "Select a model to chat with",
+            options=list(exp_options.keys()),
+        )
+        selected_exp = exp_options[selected_key] if selected_key else None
+    
+    with col2:
+        if selected_exp:
+            st.metric("Memory", f"{selected_exp.metrics.get('memory_mb', 'N/A'):.1f} MB")
+    
+    st.divider()
+    
+    # Initialize chat state
+    if "chat_messages" not in st.session_state:
+        st.session_state.chat_messages = []
+    
+    if "chat_model" not in st.session_state:
+        st.session_state.chat_model = None
+        st.session_state.chat_tokenizer = None
+        st.session_state.chat_model_id = None
+    
+    # Load model button
+    if selected_exp:
+        model_needs_load = (
+            st.session_state.chat_model is None or 
+            st.session_state.chat_model_id != selected_exp.id
+        )
+        
+        if model_needs_load:
+            if st.button("Load Model for Chat", type="primary"):
+                with st.spinner(f"Loading {selected_exp.model_name}..."):
+                    try:
+                        # Get the quantization config
+                        from quantlab.quantization import get_strategy
+                        
+                        strategy = get_strategy(selected_exp.quant_method)
+                        
+                        model, tokenizer = lab.registry.load_model(
+                            model_name=selected_exp.model_name,
+                            quantization_config=strategy.get_load_config() if strategy else None,
+                            torch_dtype=strategy.get_torch_dtype() if strategy else None,
+                        )
+                        
+                        st.session_state.chat_model = model
+                        st.session_state.chat_tokenizer = tokenizer
+                        st.session_state.chat_model_id = selected_exp.id
+                        st.session_state.chat_messages = []
+                        
+                        st.success("Model loaded! You can now chat.")
+                        st.rerun()
+                        
+                    except Exception as e:
+                        st.error(f"Failed to load model: {e}")
+        else:
+            st.success(f"✓ Model loaded: {selected_exp.model_name}")
+            
+            # Generation settings
+            with st.expander("Generation Settings"):
+                max_tokens = st.slider("Max new tokens", 10, 200, 50)
+                temperature = st.slider("Temperature", 0.1, 2.0, 0.7)
+                top_p = st.slider("Top-p", 0.1, 1.0, 0.9)
+            
+            # Chat interface
+            st.markdown("### Chat")
+            
+            # Display messages
+            for msg in st.session_state.chat_messages:
+                with st.chat_message(msg["role"]):
+                    st.write(msg["content"])
+            
+            # Input
+            user_input = st.chat_input("Type your message...")
+            
+            if user_input:
+                # Add user message
+                st.session_state.chat_messages.append({
+                    "role": "user",
+                    "content": user_input
+                })
+                
+                with st.chat_message("user"):
+                    st.write(user_input)
+                
+                # Generate response
+                with st.chat_message("assistant"):
+                    with st.spinner("Generating..."):
+                        try:
+                            import torch
+                            
+                            model = st.session_state.chat_model
+                            tokenizer = st.session_state.chat_tokenizer
+                            
+                            inputs = tokenizer(
+                                user_input, 
+                                return_tensors="pt"
+                            ).to(model.device)
+                            
+                            with torch.no_grad():
+                                outputs = model.generate(
+                                    **inputs,
+                                    max_new_tokens=max_tokens,
+                                    temperature=temperature,
+                                    top_p=top_p,
+                                    do_sample=True,
+                                    pad_token_id=tokenizer.eos_token_id,
+                                )
+                            
+                            response = tokenizer.decode(
+                                outputs[0][inputs.input_ids.shape[1]:],
+                                skip_special_tokens=True
+                            )
+                            
+                            st.write(response)
+                            
+                            st.session_state.chat_messages.append({
+                                "role": "assistant",
+                                "content": response
+                            })
+                            
+                        except Exception as e:
+                            st.error(f"Generation failed: {e}")
+            
+            # Clear chat
+            if st.button("Clear Chat"):
+                st.session_state.chat_messages = []
+                st.rerun()
+            
+            # Unload model
+            if st.button("Unload Model"):
+                st.session_state.chat_model = None
+                st.session_state.chat_tokenizer = None
+                st.session_state.chat_model_id = None
+                st.session_state.chat_messages = []
+                import gc
+                gc.collect()
+                try:
+                    import torch
+                    torch.cuda.empty_cache()
+                except:
+                    pass
+                st.rerun()
 
 
 def render_compare(lab):
