@@ -2,8 +2,15 @@
 Streamlit Web Dashboard for QuantLab.
 """
 
-import json
+import sys
 from pathlib import Path
+
+# Add parent directory to path for running directly with streamlit
+_project_root = Path(__file__).parent.parent.parent
+if str(_project_root) not in sys.path:
+    sys.path.insert(0, str(_project_root))
+
+import json
 from typing import Optional
 
 try:
@@ -124,7 +131,7 @@ def render_dashboard(lab):
     st.subheader("Experiments")
     st.dataframe(
         df,
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
     )
     
@@ -146,7 +153,7 @@ def render_dashboard(lab):
                     title="Memory Usage by Quantization",
                     barmode="group",
                 )
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
     
     with col2:
         # Latency by quantization method
@@ -161,7 +168,7 @@ def render_dashboard(lab):
                     title="Latency by Quantization",
                     barmode="group",
                 )
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
     
     # Experiment details
     st.subheader("Experiment Details")
@@ -287,7 +294,7 @@ def render_compare(lab):
         data.append(row)
     
     df = pd.DataFrame(data)
-    st.dataframe(df, use_container_width=True, hide_index=True)
+    st.dataframe(df, width="stretch", hide_index=True)
     
     # Radar chart comparison
     st.subheader("Metric Comparison")
@@ -318,7 +325,7 @@ def render_compare(lab):
             title="Metric Comparison (normalized)",
         )
         
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
 
 def render_settings(lab):
