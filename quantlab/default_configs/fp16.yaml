@@ -1,0 +1,22 @@
+# FP16 Baseline Configuration
+# Simple half-precision conversion
+
+name: fp16_baseline
+description: Half-precision (FP16) baseline configuration
+
+quantization:
+  method: fp16
+
+hardware:
+  device: auto
+  cpu_offload: false
+
+benchmark:
+  warmup_runs: 3
+  benchmark_runs: 10
+  input_lengths: [32, 64, 128]
+  output_length: 50
+  batch_sizes: [1]
+  eval_suites: ["simple"]
+  eval_samples: 100
+  track_memory: true

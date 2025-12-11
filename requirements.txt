@@ -1,0 +1,36 @@
+# Core dependencies
+torch>=2.0.0
+transformers>=4.35.0
+accelerate>=0.25.0
+safetensors>=0.4.0
+
+# Quantization libraries
+bitsandbytes>=0.41.0
+# auto-gptq>=0.5.0  # Uncomment for GPTQ support
+# autoawq>=0.1.0    # Uncomment for AWQ support
+
+# Evaluation
+datasets>=2.14.0
+# lm-eval>=0.4.0    # Uncomment for full eval harness
+
+# Benchmarking
+psutil>=5.9.0
+pynvml>=11.5.0    # NVIDIA GPU monitoring
+
+# Storage & Config
+pydantic>=2.0.0
+pyyaml>=6.0.0
+
+# CLI & Dashboard
+typer>=0.9.0
+rich>=13.0.0
+streamlit>=1.28.0
+
+# Visualization
+matplotlib>=3.7.0
+plotly>=5.18.0
+pandas>=2.0.0
+
+# Development
+pytest>=7.4.0
+black>=23.0.0
