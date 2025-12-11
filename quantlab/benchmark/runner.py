@@ -93,8 +93,13 @@ class BenchmarkRunner:
         Args:
             model: Model to evaluate
             tokenizer: Tokenizer
-            suites: List of eval suite names ('simple', 'perplexity', 'mmlu')
-            samples: Number of samples per suite
+            suites: List of eval suite names:
+                - 'simple': Basic coherence prompts
+                - 'perplexity': Calculate perplexity on sample texts
+                - 'lm_eval': Standard lm-evaluation-harness tasks (hellaswag, arc_easy, etc.)
+                - 'lm_eval_quick': Fast subset with limited samples
+                - 'lm_eval_full': Full evaluation suite
+            samples: Number of samples per suite (used as limit for lm_eval)
             
         Returns:
             Evaluation results
@@ -108,10 +113,108 @@ class BenchmarkRunner:
                 results.update(self._run_simple_eval(model, tokenizer, samples))
             elif suite == "perplexity":
                 results.update(self._run_perplexity_eval(model, tokenizer, samples))
+            elif suite == "lm_eval":
+                results.update(self._run_lm_eval(model, tokenizer, samples))
+            elif suite == "lm_eval_quick":
+                results.update(self._run_lm_eval_quick(model, tokenizer))
+            elif suite == "lm_eval_full":
+                results.update(self._run_lm_eval_full(model, tokenizer))
             else:
                 logger.warning(f"Unknown eval suite: {suite}")
         
         return results
+    
+    def _run_lm_eval(
+        self,
+        model: PreTrainedModel,
+        tokenizer: PreTrainedTokenizer,
+        limit: int = 100,
+    ) -> Dict[str, Any]:
+        """
+        Run lm-evaluation-harness with default tasks.
+        
+        Uses hellaswag and arc_easy for a balanced eval.
+        """
+        try:
+            from quantlab.benchmark.lm_eval_integration import LMEvalBenchmark
+            
+            benchmark = LMEvalBenchmark(
+                tasks=["hellaswag", "arc_easy"],
+                limit=limit,
+            )
+            
+            eval_results = benchmark.run(model, tokenizer)
+            
+            if eval_results.get("skipped"):
+                logger.warning("lm-eval skipped: " + eval_results.get("reason", "unknown"))
+                return {"lm_eval_skipped": True}
+            
+            return {
+                "lm_eval_results": eval_results.get("metrics", {}),
+                "lm_eval_tasks": ["hellaswag", "arc_easy"],
+                "lm_eval_limit": limit,
+            }
+            
+        except ImportError as e:
+            logger.warning(f"lm-eval not available: {e}")
+            return {"lm_eval_skipped": True, "lm_eval_error": str(e)}
+        except Exception as e:
+            logger.error(f"lm-eval failed: {e}")
+            return {"lm_eval_skipped": True, "lm_eval_error": str(e)}
+    
+    def _run_lm_eval_quick(
+        self,
+        model: PreTrainedModel,
+        tokenizer: PreTrainedTokenizer,
+    ) -> Dict[str, Any]:
+        """
+        Run quick lm-eval with limited samples.
+        
+        Good for rapid iteration during development.
+        """
+        try:
+            from quantlab.benchmark.lm_eval_integration import quick_eval
+            
+            metrics = quick_eval(model, tokenizer, batch_size=1, limit=50)
+            
+            return {
+                "lm_eval_quick_results": metrics,
+                "lm_eval_mode": "quick",
+            }
+            
+        except ImportError:
+            logger.warning("lm-eval not installed. Install with: pip install lm-eval")
+            return {"lm_eval_skipped": True}
+        except Exception as e:
+            logger.error(f"Quick lm-eval failed: {e}")
+            return {"lm_eval_error": str(e)}
+    
+    def _run_lm_eval_full(
+        self,
+        model: PreTrainedModel,
+        tokenizer: PreTrainedTokenizer,
+    ) -> Dict[str, Any]:
+        """
+        Run full lm-eval suite.
+        
+        Takes significant time - use for final evaluation.
+        """
+        try:
+            from quantlab.benchmark.lm_eval_integration import full_eval
+            
+            metrics = full_eval(model, tokenizer, batch_size=1)
+            
+            return {
+                "lm_eval_full_results": metrics,
+                "lm_eval_mode": "full",
+            }
+            
+        except ImportError:
+            logger.warning("lm-eval not installed. Install with: pip install lm-eval")
+            return {"lm_eval_skipped": True}
+        except Exception as e:
+            logger.error(f"Full lm-eval failed: {e}")
+            return {"lm_eval_error": str(e)}
     
     def _run_simple_eval(
         self,
