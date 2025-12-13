@@ -6,12 +6,17 @@ safetensors>=0.4.0
 
 # Quantization libraries
 bitsandbytes>=0.41.0
-# auto-gptq>=0.5.0  # Uncomment for GPTQ support
-# autoawq>=0.1.0    # Uncomment for AWQ support
+#auto-gptq>=0.5.0  # Uncomment for GPTQ support
+#autoawq>=0.1.0    # Uncomment for AWQ support
+
+# Consumer Inference Formats (optional)
+#llama-cpp-python>=0.2.0  # For GGUF/llama.cpp support (CPU/GPU)
+#exllamav2>=0.1.0         # For EXL2- GPU inference
+
 
 # Evaluation
 datasets>=2.14.0
-# lm-eval>=0.4.0    # Uncomment for full eval harness
+lm-eval>=0.4.0   
 
 # Benchmarking
 psutil>=5.9.0

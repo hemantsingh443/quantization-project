@@ -426,6 +426,246 @@ class AWQStrategy(QuantizationStrategy):
         return 0.25  # ~75% reduction for 4-bit
 
 
+# Check for optional consumer inference dependencies
+try:
+    from llama_cpp import Llama
+    LLAMA_CPP_AVAILABLE = True
+except ImportError:
+    LLAMA_CPP_AVAILABLE = False
+    Llama = None
+
+try:
+    import exllamav2
+    EXLLAMAV2_AVAILABLE = True
+except (ImportError, RuntimeError, Exception):
+    # ImportError: not installed
+    # RuntimeError: CUDA/ninja issues during JIT compilation
+    EXLLAMAV2_AVAILABLE = False
+    exllamav2 = None
+
+
+class GGUFStrategy(QuantizationStrategy):
+    """
+    GGUF format for llama.cpp inference.
+    
+    Gold standard for consumer-grade CPU/GPU inference. Uses llama-cpp-python
+    for native integration with the llama.cpp library.
+    
+    Supported quantization types:
+        - Q2_K: 2-bit (extreme compression, quality loss)
+        - Q3_K_M: 3-bit medium
+        - Q4_K_M: 4-bit medium (recommended balance)
+        - Q5_K_M: 5-bit medium (good quality)
+        - Q6_K: 6-bit (near-lossless)
+        - Q8_0: 8-bit (minimal quality loss)
+    
+    Reference: https://github.com/ggerganov/llama.cpp
+    """
+    
+    # Memory reduction estimates for each quant type (relative to FP16)
+    QUANT_TYPE_MEMORY = {
+        "Q2_K": 0.125,   # ~87.5% reduction
+        "Q3_K_S": 0.1875,
+        "Q3_K_M": 0.1875,
+        "Q3_K_L": 0.1875,
+        "Q4_0": 0.25,
+        "Q4_K_S": 0.25,
+        "Q4_K_M": 0.25,   # ~75% reduction
+        "Q5_0": 0.3125,
+        "Q5_K_S": 0.3125,
+        "Q5_K_M": 0.3125, # ~68.75% reduction  
+        "Q6_K": 0.375,    # ~62.5% reduction
+        "Q8_0": 0.5,      # ~50% reduction
+    }
+    
+    def __init__(
+        self,
+        quant_type: str = "Q4_K_M",
+        n_gpu_layers: int = -1,  # -1 = all layers on GPU
+        n_ctx: int = 2048,
+        n_batch: int = 512,
+        verbose: bool = False,
+    ):
+        super().__init__()
+        self._is_load_time = True
+        self.quant_type = quant_type.upper()
+        self.n_gpu_layers = n_gpu_layers
+        self.n_ctx = n_ctx
+        self.n_batch = n_batch
+        self.verbose = verbose
+        
+        if self.quant_type not in self.QUANT_TYPE_MEMORY:
+            logger.warning(
+                f"Unknown GGUF quant type: {quant_type}. "
+                f"Known types: {list(self.QUANT_TYPE_MEMORY.keys())}"
+            )
+    
+    @property
+    def requires_calibration(self) -> bool:
+        return False  # GGUF models are pre-quantized
+    
+    def get_load_config(self) -> Optional[Dict[str, Any]]:
+        """
+        Get configuration for loading GGUF models.
+        
+        Returns:
+            Dict with llama.cpp loading parameters
+        """
+        return {
+            "n_gpu_layers": self.n_gpu_layers,
+            "n_ctx": self.n_ctx,
+            "n_batch": self.n_batch,
+            "verbose": self.verbose,
+        }
+    
+    def load_model(self, model_path: str) -> Any:
+        """
+        Load a GGUF model using llama-cpp-python.
+        
+        Args:
+            model_path: Path to .gguf file or HuggingFace model ID
+            
+        Returns:
+            Llama model instance
+        """
+        if not LLAMA_CPP_AVAILABLE:
+            raise ImportError(
+                "llama-cpp-python is required for GGUF support. "
+                "Install with: pip install llama-cpp-python\n"
+                "For GPU support: CMAKE_ARGS='-DGGML_CUDA=on' pip install llama-cpp-python"
+            )
+        
+        config = self.get_load_config()
+        logger.info(f"Loading GGUF model: {model_path} with {self.quant_type}")
+        
+        model = Llama(
+            model_path=model_path,
+            **config,
+        )
+        
+        return model
+    
+    def estimate_memory_reduction(self) -> float:
+        """Estimate memory reduction based on quantization type."""
+        return self.QUANT_TYPE_MEMORY.get(self.quant_type, 0.25)
+    
+    def validate_hardware(self) -> List[str]:
+        warnings = []
+        if not LLAMA_CPP_AVAILABLE:
+            warnings.append("llama-cpp-python not installed")
+        if self.n_gpu_layers != 0 and not torch.cuda.is_available():
+            warnings.append("GPU layers requested but CUDA not available")
+        return warnings
+
+
+class ExLlamaV2Strategy(QuantizationStrategy):
+    """
+    ExLlamaV2 (EXL2) format for high-performance GPU inference.
+    
+    Optimized for consumer GPUs with mixed-precision quantization.
+    Supports flexible bitrates from 2-8 bits, with per-layer optimization.
+    
+    Key features:
+        - Mixed-precision quantization (different bits per layer)
+        - Optimized CUDA kernels for fast inference
+        - Flash attention support
+        - Efficient KV cache management
+    
+    Reference: https://github.com/turboderp/exllamav2
+    """
+    
+    def __init__(
+        self,
+        bits: float = 4.0,  # Target average bits (2.0-8.0)
+        max_seq_len: int = 4096,
+        rope_scale: float = 1.0,
+        rope_alpha: float = 1.0,
+        no_flash_attn: bool = False,
+    ):
+        super().__init__()
+        self._is_load_time = True
+        self.bits = bits
+        self.max_seq_len = max_seq_len
+        self.rope_scale = rope_scale
+        self.rope_alpha = rope_alpha
+        self.no_flash_attn = no_flash_attn
+        
+        if not 2.0 <= bits <= 8.0:
+            logger.warning(f"EXL2 bits should be 2.0-8.0, got {bits}")
+    
+    @property
+    def requires_calibration(self) -> bool:
+        return False  # EXL2 models are pre-quantized
+    
+    def get_load_config(self) -> Optional[Dict[str, Any]]:
+        """
+        Get configuration for loading EXL2 models.
+        
+        Returns:
+            Dict with ExLlamaV2 loading parameters
+        """
+        return {
+            "max_seq_len": self.max_seq_len,
+            "rope_scale": self.rope_scale,
+            "rope_alpha": self.rope_alpha,
+            "no_flash_attn": self.no_flash_attn,
+        }
+    
+    def load_model(self, model_path: str) -> Any:
+        """
+        Load an EXL2 model using ExLlamaV2.
+        
+        Args:
+            model_path: Path to EXL2 model directory
+            
+        Returns:
+            ExLlamaV2 model and cache instances
+        """
+        if not EXLLAMAV2_AVAILABLE:
+            raise ImportError(
+                "exllamav2 is required for EXL2 support. "
+                "Install with: pip install exllamav2"
+            )
+        
+        from exllamav2 import ExLlamaV2, ExLlamaV2Config, ExLlamaV2Cache
+        from exllamav2.generator import ExLlamaV2StreamingGenerator
+        
+        logger.info(f"Loading EXL2 model: {model_path} ({self.bits}-bit avg)")
+        
+        config = ExLlamaV2Config()
+        config.model_dir = model_path
+        config.prepare()
+        
+        if self.max_seq_len:
+            config.max_seq_len = self.max_seq_len
+        if self.rope_scale != 1.0:
+            config.scale_pos_emb = self.rope_scale
+        if self.rope_alpha != 1.0:
+            config.scale_alpha_value = self.rope_alpha
+        if self.no_flash_attn:
+            config.no_flash_attn = True
+        
+        model = ExLlamaV2(config)
+        model.load()
+        
+        cache = ExLlamaV2Cache(model, lazy=True)
+        
+        return {"model": model, "cache": cache, "config": config}
+    
+    def estimate_memory_reduction(self) -> float:
+        """Estimate memory reduction based on target bits."""
+        # FP16 is 16 bits, so reduction is bits/16
+        return self.bits / 16.0
+    
+    def validate_hardware(self) -> List[str]:
+        warnings = []
+        if not EXLLAMAV2_AVAILABLE:
+            warnings.append("exllamav2 not installed")
+        if not torch.cuda.is_available():
+            warnings.append("ExLlamaV2 requires CUDA GPU")
+        return warnings
+
+
 # Registry of available strategies
 _STRATEGY_REGISTRY: Dict[str, type] = {
     "none": NoQuantizationStrategy,
@@ -437,6 +677,8 @@ _STRATEGY_REGISTRY: Dict[str, type] = {
     "nf4": NF4Strategy,
     "gptq": GPTQStrategy,
     "awq": AWQStrategy,
+    "gguf": GGUFStrategy,
+    "exl2": ExLlamaV2Strategy,
 }
 
 
